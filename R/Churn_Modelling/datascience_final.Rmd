@@ -1,0 +1,326 @@
+---
+title: "Datascience_final"
+output: pdf_document
+date: "2023-12-21"
+---
+#### Ridwan Ahmed Arman (21-44504-1)         
+#### Nafis Alam Siddiquee (20-43218-1)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Dataset Description 
+<br>
+Customer churn is the business term that describes how many and at what rate customers stop using a product or service or stop doing business with a company altogether. The dataset that we'll be using to solve this problem contains customer data, where each entry in the dataset represents one customer. For each customer, there are several features that describe the customer's relationship with the bank and information about the customer's finances. Additionally, there's metadata for each customer, like name, gender, and customer identification number.
+
+Main dataset <https://www.kaggle.com/datasets/barelydedicated/bank-customer-churn-modeling/code?datasetId=17473&searchQuery=naive>.
+
+<br>
+Loading packages
+
+```{r}
+library(tidyverse)
+library(skimr)
+library(e1071)
+library(purrr)
+library(caTools)
+library(naivebayes)
+library(caret)
+```
+<br>
+Load Dataset
+<br>
+```{r}
+sample_data <- read_csv("/home/ridwan/Documents/aiub/data science/final project/Churn_Modelling.csv")
+```
+
+# Data Understanding
+<br>
+Reviewing the dataset
+
+```{r}
+head(sample_data)
+```
+
+Checking Datatypes 
+
+```{r}
+str(sample_data)
+```
+
+Summary of the dataset
+
+```{r}
+skim_without_charts(sample_data)
+```
+
+<br>
+<br>
+
+# Exploratory Data Analysis (EDA)
+<br>
+### Missing values and outliner
+<br>
+Find number of missing variables column wise
+
+```{r}
+apply(sample_data, MARGIN = 2, FUN = function(x) sum(is.na(x)))
+```
+
+Find Duplicate data
+
+```{r}
+# duplicated(sample_data)
+sum(duplicated(sample_data))
+```
+
+Checking outliner in HasCrCard, IsActiveMember and Exited 
+
+```{r}
+plot(sample_data$HasCrCard, sample_data$IsActiveMember)
+```
+
+Boxplot for age to detect outliers
+
+```{r}
+boxplot(sample_data$Balance  , main= "Boxplot of Balance " , boxwex=0.1)
+```
+
+
+```{r}
+boxplot(sample_data$Age  , main= "Boxplot of Age " , boxwex=0.1)
+```
+
+
+Visualize the gender based on age
+
+```{r}
+ggplot(data = sample_data) +
+geom_bar(mapping = aes(x = Geography, fill= Gender))
+```
+
+# Summary of the EDA
+
+##### 1. There is no missing values in the dataset
+##### 2. There is no outliers in the dataset.
+##### 3. From the bar_plot we can see There is no gender skewness.
+##### 4. Customers are from 3 different coutries. France, Germany and Spain. Most of them are from France
+<br>
+
+# Feature engineering
+
+### Pearson's Chi-squared test
+
+
+```{r}
+# Converting character variables to factors for analysis
+sample_data <- sample_data %>%
+  mutate(
+    Surname = as.factor(Surname),
+    Geography = as.factor(Geography),
+    Gender = as.factor(Gender)
+  )
+
+# Performing chi-squared test for categorical variables against the target 'Exited'
+categorical_vars <- c("Surname", "Geography", "Gender")
+
+# Function to perform chi-squared test and extract p-values
+chi_squared_test <- function(var) {
+  chisq <- chisq.test(sample_data[[var]], sample_data$Exited)
+  p_value <- chisq$p.value
+  return(data.frame(Variable = var, P_Value = p_value))
+}
+
+# Applying chi-squared test for each categorical variable
+chi_squared_results <- map_df(categorical_vars, chi_squared_test)
+# Filter attributes with significant p-values (e.g., p-value < 0.05)
+significant_attributes <- chi_squared_results %>%
+  filter(P_Value < 0.05) %>%
+  pull(Variable)
+
+# Show significant attributes
+print(significant_attributes)
+```
+
+
+
+## Feature selection
+<br>
+The first column is called RowNumber, and it just enumerates the rows. We should drop this feature, because row number shouldn't have any correlation with whether or not a customer churned.The same is true for CustomerID, which appears to be a number assigned to the customer for administrative purposes, and Surname, which is the customer's last name. Since these cannot be expected to have any influence over the target variable, we can remove them from the modeling dataset.Finally, for ethical reasons, we should remove the Gender column. The reason for doing this is that we don't want our model-making predictions (and therefore, offering promotions/financial incentives) based on a person's gender.
+
+```{r}
+sample_data2 <- subset(sample_data, select = -c(RowNumber, CustomerId, Surname, Gender))
+```
+```{r}
+head(sample_data2)
+```
+
+## Feature extraction
+<br>
+Adding new column Loyalty. The logic behind using tenure and dividing it by the customer's age is that it represents the percentage of a person's life that they've been customers of the bank. People with greater percentages may be more loyal customers.
+
+```{r}
+sample_data2$Loyalty <- sample_data2$Tenure/sample_data2$Age
+head(sample_data2)
+```
+
+
+## Feature transformation
+<br>
+The models we will be building with this data are all classification models, and classification models generally need categorical variables to be encoded. Our dataset has one categorical feature: Geography.There are three unique values: France, Spain, and Germany. Encoding this data so it can be represented using Boolean features.
+
+```{r}
+sample_data2$Geography <-  as.integer(factor(sample_data2$Geography))
+head(sample_data2)
+```
+
+# Naive Bayes
+<br>
+
+
+```{r}
+barplot(prop.table(table(sample_data2$Exited)),
+        col = rainbow(2),
+        ylim = c(0, 1),
+        main = "Class Distribution")
+```
+
+First, we'll check the class balance of the exited column which is our target variable.The class is split roughly 80/20. In other words, about 20% of the people in this dataset churned. This is an unbalanced data set, but it's not extreme. So we'll proceed without doing any class re-balancing of our target variable.
+
+
+When we prepared our data, we engineered a feature called loyalty by dividing tenure by age. Because this new feature is just the quotient of two existing variables, it's no longer conditionally independent. So we're going to drop tenure and age. 
+
+```{r}
+sample_data3 <- subset(sample_data2, select = -c(Age, Tenure))
+head(sample_data3)
+```
+
+### Splitting Data into Train and Test sets
+<br>
+we need to split the data first into features and target variable and then into training data and test data. Let's assign our predictive features to a variable called X. And the exited column, our target to a variable called Y. Then, we can split into training and test data. We'll put 25% of the data into our test set and use the remaining 75% to train the model. Notice that we include the argument stratify equals Y. If our master data has a class split of 80/20, stratifying ensures that this proportion is maintained in both the training and test data.
+
+
+```{r}
+# Splitting the data into predictors (X) and target variable (y)
+X <- sample_data3 %>%
+  select(-Exited) # Exclude the target variable 'Exited'
+y <- sample_data3$Exited
+
+# Dividing the data into training and test sets (70% training, 30% test)
+set.seed(123) # Set seed for reproducibility
+train_indices <- createDataPartition(y, p = 0.7, list = FALSE)
+train_data <- sample_data3[train_indices, ]
+test_data <- sample_data3[-train_indices, ]
+
+```
+
+Splitted the data first into features and target variable and then into training data and test data. Let's assign predictive features to a variable called X. And the exited column, our target to a variable called Y. Then, we can split into training and test data. We'll put 30% of the data into our test set and use the remaining 70% to train the model. Notice that we include the argument stratify equals Y. If our master data has a class split of 80/20, stratifying ensures that this proportion is maintained in both the training and test data.
+
+
+### Predictive accuracy of the Naive Bayes classifier
+<br>
+```{r}
+nb_model <- naiveBayes(Exited ~ ., data = train_data, laplace = 1)  # Set laplace parameter (smoothing) to 1 or another appropriate value
+
+# Predicting on the test set using the trained model
+predicted_test <- predict(nb_model, newdata = test_data)
+# Convert 'Exited' column to factor with same levels as predicted values
+test_data$Exited <- factor(test_data$Exited, levels = levels(predicted_test))
+
+# Calculating accuracy on the test set (train-test split approach)
+accuracy_test <- confusionMatrix(predicted_test, test_data$Exited)$overall['Accuracy']
+print(accuracy_test)
+```
+
+This code illustrates the process of training a Naive Bayes model, making predictions on a test set, and quantifying the overall accuracy of the model's predictions. Adjustments to Laplace smoothing or other evaluation metrics can be made based on specific project requirements and data characteristics.
+
+### K-fold cross validation
+<br>
+```{r}
+# Create an empty vector to store accuracy values for each fold
+accuracy_values <- numeric(10)
+
+# Create indices for 10-fold cross-validation
+folds <- cut(seq(1, nrow(sample_data3)), breaks = 10, labels = FALSE)
+
+# Perform 10-fold cross-validation
+for (i in 1:10) {
+  # Define the test set and training set for this fold
+  test_indices <- which(folds == i)
+  test_data <- sample_data3[test_indices, ]
+  train_data <- sample_data3[-test_indices, ]
+  
+  # Train the Naïve Bayes classifier using the training data
+  nb_model <- naiveBayes(Exited ~ ., data = train_data)
+  
+  # Predict on the test set
+  predicted <- predict(nb_model, newdata = test_data)
+  
+  # Calculate accuracy for this fold
+  correct_predictions <- sum(predicted == test_data$Exited)
+  fold_accuracy <- correct_predictions / nrow(test_data)
+  
+  # Store the accuracy value
+  accuracy_values[i] <- fold_accuracy
+}
+
+# Compute the average accuracy across all folds
+cv_accuracy <- mean(accuracy_values)
+print(cv_accuracy)
+```
+
+This code snippet demonstrates the implementation of 10-fold cross-validation to evaluate a Naive Bayes classifier's performance. Created an empty numeric vector accuracy_values to store accuracy values for each fold. Defined indices for 10-fold cross-validation using cut() function to split the dataset into 10 folds. Then Splitted the data into training and test sets for each fold, trains the Naive Bayes model, makes predictions, and computes accuracy for each fold, storing the values in accuracy_values. At last calculated the average accuracy across all folds by computing the mean of accuracy_values.
+
+### Confusion matrix
+<br>
+```{r}
+# Train the Naïve Bayes classifier using the full dataset
+nb_model_full <- naiveBayes(Exited ~ ., data = sample_data3)
+
+# Predicting on the full dataset using the trained model
+predicted_full <- predict(nb_model_full, newdata = sample_data3)
+
+# Ensure both variables are factors with the same levels
+predicted_full <- factor(predicted_full, levels = c("0", "1"))  # Replace with your levels if different
+sample_data3$Exited <- factor(sample_data3$Exited, levels = c("0", "1"))  # Replace with your levels if different
+
+# Generate confusion matrix
+conf_matrix <- confusionMatrix(predicted_full, sample_data3$Exited)
+print("Confusion Matrix:")
+print(conf_matrix$table)
+```
+
+The confusion matrix is a table used in machine learning to describe the performance of a classification model on a set of test data for which the true values are known. It consists of four different values: True Positives (TP), True Negatives (TN), False Positives (FP), and False Negatives (FN). These values are organized into a table that helps in understanding the model's performance.
+(0,0): 7941 instances were correctly classified as Class 0 (True Negatives - TN).
+(0,1): 1791 instances were classified as Class 1 when they were actually Class 0 (False Positives - FP).
+(1,0): 22 instances were classified as Class 0 when they were actually Class 1 (False Negatives - FN).
+(1,1): 246 instances were correctly classified as Class 1 (True Positives - TP).
+
+The model correctly predicted Class 0 (label 0) 7941 times.
+It correctly predicted Class 1 (label 1) 246 times.
+There were 1791 instances where the model incorrectly predicted Class 1 instead of Class 0.
+There were 22 instances where the model incorrectly predicted Class 0 instead of Class 1.
+
+
+### Recall, Precision and F- measure
+<br>
+
+```{r}
+recall <- conf_matrix$byClass["Recall"]
+precision <- conf_matrix$byClass["Precision"]
+f_measure <- conf_matrix$byClass["F1"]
+print(paste("Recall:", recall))
+print(paste("Precision:", precision))
+print(paste("F-measure:", f_measure))
+```
+
+Precision measures the accuracy of positive predictions made by the model. It's calculated as the ratio of true positive predictions to the sum of true positives and false positives.
+Formula: Precision = TP / (TP + FP)
+
+Recall measures the ability of the model to correctly identify positive instances from all actual positive instances. It calculates the ratio of true positive predictions to the sum of true positives and false negatives.
+Formula: Recall = TP / (TP + FN)
+
+F-measure is the harmonic mean of precision and recall. It provides a balance between precision and recall. F1-score reaches its best value at 1 (perfect precision and recall) and worst at 0.
+Formula: F1-score = 2 * (Precision * Recall) / (Precision + Recall)
+
