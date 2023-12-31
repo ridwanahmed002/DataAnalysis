@@ -1,0 +1,380 @@
+---
+title: "Datascience_final"
+output: pdf_document
+date: "2023-12-25"
+---
+#### Ridwan Ahmed Arman (21-44504-1)         
+#### Nafis Alam Siddiquee (20-43218-1)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Dataset Description 
+<br>
+This database contains 76 attributes, but all published experiments refer to using a subset of 14 of them.  In particular, the Cleveland database is the only one that has been used by ML researchers to date.  The "goal" field refers to the presence of heart disease in the patient.  It is integer valued from 0 (no presence) to 4. Experiments with the Cleveland database have concentrated on simply attempting to distinguish presence (values 1,2,3,4) from absence (value 0).  
+
+Content
+There are 13 attributes
+
+age: age in years
+sex: sex (1 = male; 0 = female)
+cp: chest pain type
+-- Value 0: typical angina
+-- Value 1: atypical angina
+-- Value 2: non-anginal pain
+-- Value 3: asymptomatic
+trestbps: resting blood pressure (in mm Hg on admission to the hospital)
+chol: serum cholestoral in mg/dl
+fbs: (fasting blood sugar > 120 mg/dl) (1 = true; 0 = false)
+restecg: resting electrocardiographic results
+-- Value 0: normal
+-- Value 1: having ST-T wave abnormality (T wave inversions and/or ST elevation or depression of > 0.05 mV)
+-- Value 2: showing probable or definite left ventricular hypertrophy by Estes' criteria
+thalach: maximum heart rate achieved
+exang: exercise induced angina (1 = yes; 0 = no)
+oldpeak = ST depression induced by exercise relative to rest
+slope: the slope of the peak exercise ST segment
+-- Value 0: upsloping
+-- Value 1: flat
+-- Value 2: downsloping
+ca: number of major vessels (0-3) colored by flourosopy
+thal: 0 = normal; 1 = fixed defect; 2 = reversable defect
+and the label
+condition: 0 = no disease, 1 = disease
+
+Main dataset <https://www.kaggle.com/datasets/cherngs/heart-disease-cleveland-uci>.
+
+<br>
+Loading packages
+
+```{r}
+library(tidyverse)
+library(skimr)
+library(e1071)
+library(purrr)
+library(caTools)
+library(naivebayes)
+library(caret)
+library(zoo)
+```
+<br>
+Load Dataset
+<br>
+```{r}
+sample_data <- read_csv("/home/ridwan/Documents/aiub/data science/project final/heart_cleveland_upload.csv")
+```
+
+# Data Understanding
+<br>
+Reviewing the dataset
+
+```{r}
+head(sample_data)
+```
+
+Checking Datatypes 
+
+```{r}
+str(sample_data)
+```
+
+Summary of the dataset
+
+```{r}
+skim_without_charts(sample_data)
+```
+
+<br>
+<br>
+
+# Exploratory Data Analysis (EDA)
+<br>
+### Missing values and outliner
+<br>
+Find number of missing variables column wise
+
+```{r}
+apply(sample_data, MARGIN = 2, FUN = function(x) sum(is.na(x)))
+```
+
+Find Duplicate data
+
+```{r}
+# duplicated(sample_data)
+sum(duplicated(sample_data))
+```
+
+Checking outliner in sex and fbs 
+
+```{r}
+plot(sample_data$sex, sample_data$fbs)
+```
+This explains that all values are limited to either 0 or 1
+
+Checking outliner in exang and conddition 
+
+```{r}
+plot(sample_data$exang, sample_data$condition)
+```
+This explains that all values are limited to either 0 or 1
+
+
+Boxplot to detect outliers
+
+```{r}
+variables <- list(sample_data$age, sample_data$trestbps, sample_data$chol, sample_data$thalach)
+boxplot(variables, names = c("Age", "Trestbps", "chol", "Thalach"), main = "Boxplots of Age, chol, Trestbps, thalach")
+```
+Here the heavy black lines represents the majority of the values for each attributes. We can see from the boxplot that there are outliers in chol and trestbps. But in case of trestbps the value of outliers are very close to the majority values so we ignored that and replaced outliers of chol with mean value
+
+Replacing outliers of chol with mean value
+
+```{r}
+# Calculate the mean value of 'chol'
+mean_chol <- mean(sample_data$chol)
+
+# Replace outliers in 'chol' greater than 350 with the mean value
+sample_data$chol[sample_data$chol > 350] <- mean_chol
+```
+
+
+```{r}
+variables2 <- list(sample_data$cp,sample_data$restecg, sample_data$oldpeak)
+boxplot(variables2, names = c("CP", "restecg", "oldpeak"), main = "Boxplots of CP, restecg, oldpeak")
+```
+Here we found outlier in oldpeak. So we replaced them with their mean value
+
+
+Replacing outliers of oldpeak with mean value
+
+```{r}
+# Calculate the mean value of 'chol'
+mean_oldpeak <- mean(sample_data$oldpeak)
+
+# Replace outliers in 'chol' greater than 350 with the mean value
+sample_data$oldpeak[sample_data$oldpeak > 3] <- mean_oldpeak
+```
+
+```{r}
+sample_data
+```
+
+Visualize the gender based on age
+
+```{r}
+ggplot(data = sample_data, aes(x=age,y=condition))+ geom_point(aes(color=sex))+ facet_wrap(~sex)
+```
+
+# Summary of the EDA
+
+##### 1. There is no missing values in the dataset
+##### 2. There is no outliers in the dataset.
+##### 3. From the bar_plot we can see There is no gender skewness.
+
+<br>
+
+Converting to categorical 
+
+```{r}
+sample_data$categorical_age <- cut(sample_data$age, breaks = c(29, 40, 50, 60, 70, 80), labels = c("29-40", "41-50", "51-60", "61-70", "71-80"), include.lowest = TRUE)
+
+sample_data$categorical_sex <- factor(sample_data$sex, levels = c(0, 1), labels = c("female", "male"))
+
+sample_data$categorical_cp <- factor(sample_data$cp, levels = c(0, 1, 2, 3), labels = c("typical angina", "atypical angina", "non-anginal pain", "asymptomatic"))
+
+sample_data$categorical_trestbps <- cut(sample_data$trestbps, breaks = c(94, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200), labels = c("94-100", "101-110", "111-120", "121-130", "131-140", "141-150", "151-160", "161-170", "171-180", "181-190", "191-200"), include.lowest = TRUE)
+
+sample_data$categorical_chol <- cut(sample_data$chol, breaks = c(100, 200, 300, 400, 500, 600), labels = c("100-200", "201-300", "301-400", "401-500", "501-600"), include.lowest = TRUE)
+
+sample_data$categorical_fbs <- factor(sample_data$fbs, levels = c(0, 1), labels = c("false", "true"))
+
+sample_data$categorical_restecg <- factor(sample_data$restecg, levels = c(0, 1, 2), labels = c("normal", "ST abnormal", "lvh"))
+
+sample_data$categorical_thalach <- cut(sample_data$thalach, breaks = c(71, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200), labels = c("71-80", "81-90", "91-100", "101-110", "111-120", "121-130", "131-140", "141-150", "151-160", "161-170", "171-180", "181-190", "191-200"), include.lowest = TRUE)
+
+sample_data$categorical_exang <- factor(sample_data$exang, levels = c(0, 1), labels = c("no", "yes"))
+
+sample_data$categorical_oldpeak <- cut(sample_data$oldpeak, breaks = c(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5), labels = c("0.0-0.5", "0.6-1.0", "1.1-1.5", "1.6-2.0", "2.1-2.5", "2.6-3.0", "3.1-3.5", "3.6-4.0", "4.1-4.5", "4.6-5.0", "5.1-5.5", "5.6-6.0", "6.1-6.5"), include.lowest = TRUE)
+
+sample_data$categorical_slope <- factor(sample_data$slope, levels = c(0, 1, 2), labels = c("upsloping", "flat", "downsloping"))
+
+sample_data$categorical_ca <- factor(sample_data$ca, levels = c(0, 1, 2, 3), labels = c("r", "g", "b", "w"))
+
+sample_data$categorical_thal <- factor(sample_data$thal, levels = c(0, 1, 2), labels = c("normal", "fixed defect", "reversable defect"))
+
+sample_data$categorical_condition <- factor(sample_data$condition, levels = c(0, 1), labels = c("no disease", "disease"))
+```
+
+
+
+# Feature engineering
+
+### Pearson's Chi-squared test
+
+
+```{r}
+# Perform Chi-squared test between each categorical attribute and the label
+chi_squared_results <- lapply(sample_data[, c("categorical_age", "categorical_sex", "categorical_cp", "categorical_trestbps",
+                                             "categorical_chol", "categorical_fbs", "categorical_restecg", "categorical_thalach",
+                                             "categorical_exang", "categorical_oldpeak", "categorical_slope", "categorical_ca",
+                                             "categorical_thal", "categorical_condition")],
+                              function(x) {
+                                chisq.test(table(x, sample_data$categorical_condition))
+                              })
+
+# Extract p-values from the Chi-squared test results
+p_values <- sapply(chi_squared_results, function(x) x$p.value)
+
+# Determine significant attributes based on a chosen significance level (e.g., 0.05)
+significant_attributes <- names(p_values[p_values < 0.05])
+
+# Print significant attributes
+print(significant_attributes)
+
+```
+
+The Pearson's Chi-squared test is commonly used for testing the independence between categorical variables. After performing chi-squared we got the p value and the the targeted variable was cal_condition. THose attributes which p value is less than 0.05 are significant attributes. After performing this we can see there are 3 non significant attributes.
+
+
+# Naive Bayes
+<br>
+
+ Select Data with Significant Attributes
+```{r}
+significant_attributes <- c("categorical_age", "categorical_sex", "categorical_cp", "categorical_restecg", "categorical_thalach", "categorical_exang", "categorical_slope", "categorical_ca", "categorical_thal", "categorical_condition")
+
+# Select the columns with significant attributes
+significant_data <- sample_data[, significant_attributes]
+
+```
+
+
+
+### Splitting Data into Train and Test sets
+<br>
+we need to split the data first into features and target variable and then into training data and test data. Let's assign our predictive features to a variable called X. And the exited column, our target to a variable called Y. Then, we can split into training and test data. We'll put 30% of the data into our test set and use the remaining 70% to train the model. Notice that we include the argument stratify equals Y. If our master data has a class split of 80/20, stratifying ensures that this proportion is maintained in both the training and test data.
+
+
+```{r}
+set.seed(123)  # Set seed for reproducibility
+train_indices <- sample(1:nrow(significant_data), 0.7 * nrow(significant_data))  # 70% for training
+
+# Create training and test sets
+train_data <- significant_data[train_indices, ]
+test_data <- significant_data[-train_indices, ]
+
+```
+
+Train_indices is used to index significant_data and extract the rows that correspond to the selected indices, assigning these rows to train_data. This subset of the data will be used for training your machine learning model.Test_data is created by excluding the rows indexed by train_indices from significant_data. This test set will serve as an independent dataset to evaluate the model's performance after training.
+
+
+### Predictive accuracy of the Naive Bayes classifier
+<br>
+```{r}
+# Build Naïve Bayes Classifier
+nb_model <- naiveBayes(categorical_condition ~ ., data = train_data)
+
+# Predict using the test set
+test_predictions <- predict(nb_model, newdata = test_data, type = "class")
+
+# Calculate accuracy
+accuracy_test <- mean(test_predictions == test_data$categorical_condition)
+
+print(accuracy_test)
+```
+
+This code snippet trains a Naive Bayes classifier using train_data, makes predictions on the unseen test_data, and calculates the accuracy of the model's predictions against the actual target variable values in the test dataset. This accuracy value represents the proportion of correct predictions made by the model on the test set.
+
+### K-fold cross validation
+
+
+```{r}
+# Remove rows with missing values in any column
+#cleaned_train_data <- na.omit(train_data)
+
+# Train Naïve Bayes Classifier using 10-fold cross-validation on cleaned data
+#nb_model_cv <- train(categorical_condition ~ ., data = cleaned_train_data, method = "naive_bayes",
+#                     trControl = trainControl, tuneLength = 10)
+
+
+# Print accuracy using 10-fold cross-validation on cleaned data
+#print(nb_model_cv)
+#acc_mean <- mean(nb_model_cv$results$Accuracy)
+#print(paste("Mean Accuracy:", acc_mean))
+```
+Naive Bayes 
+
+206 samples
+  9 predictor
+  2 classes: 'no disease', 'disease' 
+
+No pre-processing
+Resampling: Cross-Validated (10 fold) 
+Summary of sample sizes: 186, 186, 185, 185, 185, 186, ... 
+Resampling results across tuning parameters:
+
+  usekernel  Accuracy   Kappa    
+  FALSE      0.6850000  0.3502944
+   TRUE      0.7380952  0.4848421
+
+Tuning parameter 'laplace' was held constant at a value of 0
+Tuning parameter 'adjust' was held constant at a value of 1
+Accuracy was used to select the optimal model using the largest value.
+The final values used for the model were laplace = 0, usekernel = TRUE and adjust = 1.
+
+
+[1] "Mean Accuracy: 0.711547619047619"
+
+
+
+
+This code snippet prepares the training data by removing rows with missing values, trains a Naive Bayes classifier using 10-fold cross-validation on the cleaned dataset, and then prints information about the model's performance, specifically the mean accuracy obtained from the cross-validation process. This approach helps in evaluating the model's performance more reliably by using cross-validation to assess its predictive accuracy on multiple subsets of the data.
+
+### Confusion matrix
+<br>
+```{r}
+# Predict using the test set for confusion matrix
+test_predictions <- predict(nb_model, newdata = test_data)
+
+# Create confusion matrix
+conf_matrix <- confusionMatrix(test_predictions, test_data$categorical_condition)
+
+print(conf_matrix$table)
+```
+
+
+The table you've provided appears to be a confusion matrix that represents the performance of a classification model. In a confusion matrix, each row corresponds to the actual classes, and each column represents the predicted classes. 
+
+True Negative (TN): Instances where the actual class is "no disease" and the model correctly predicted "no disease" are 41.
+False Positive (FP): Instances where the actual class is "no disease," but the model incorrectly predicted "disease" are 4.
+False Negative (FN): Instances where the actual class is "disease," but the model incorrectly predicted "no disease" are 9.
+True Positive (TP): Instances where the actual class is "disease," and the model correctly predicted "disease" are 36.
+
+
+
+### Recall, Precision and F- measure
+<br>
+
+```{r}
+# Extract confusion matrix metrics
+recall <- conf_matrix$byClass["Recall"]
+precision <- conf_matrix$byClass["Precision"]
+f_measure <- conf_matrix$byClass["F1"]
+
+# View confusion matrix and metrics
+print(conf_matrix)
+print(paste("Recall:", recall))
+print(paste("Precision:", precision))
+print(paste("F-measure:", f_measure))
+```
+
+Precision measures the accuracy of positive predictions made by the model. It's calculated as the ratio of true positive predictions to the sum of true positives and false positives.
+Formula: Precision = TP / (TP + FP)
+
+Recall measures the ability of the model to correctly identify positive instances from all actual positive instances. It calculates the ratio of true positive predictions to the sum of true positives and false negatives.
+Formula: Recall = TP / (TP + FN)
+
+F-measure is the harmonic mean of precision and recall. It provides a balance between precision and recall. F1-score reaches its best value at 1 (perfect precision and recall) and worst at 0.
+Formula: F1-score = 2 * (Precision * Recall) / (Precision + Recall)
+
