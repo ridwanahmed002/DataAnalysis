@@ -4,7 +4,7 @@ output: pdf_document
 date: "2023-12-21"
 ---
 #### Ridwan Ahmed Arman (21-44504-1)         
-#### Nafis Alam Siddiquee (20-43218-1)
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
